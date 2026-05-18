@@ -132,6 +132,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
                 super().__init__()
                 self.backbone = backbone
                 self.classifier = torch.nn.Linear(feat_dim, num_classes)
+
             def forward(self, x):
                 feat = self.backbone(x)
                 return self.classifier(feat)
@@ -163,6 +164,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
                 super().__init__()
                 self.backbone = backbone
                 self.classifier = torch.nn.Linear(backbone.output_dim, num_classes)
+
             def forward(self, x):
                 feat = self.backbone(x)
                 return self.classifier(feat)
@@ -345,16 +347,20 @@ def main():
                     inputs = inputs.to(device)
                     scene = scene.to(device)
                     outputs = model(inputs, scene)
+                    preds = outputs
                 elif len(batch) == 3:
                     inputs, targets, _ = batch
                     inputs = inputs.to(device)
                     outputs = model(inputs)
+                    preds = outputs
                 else:
                     inputs, targets = batch
                     inputs = inputs.to(device)
                     outputs = model(inputs)
-                all_preds.append(outputs.cpu().numpy())
-                all_targets.append(targets.numpy())
+                    preds = outputs.argmax(dim=1)
+
+                all_preds.append(preds.cpu().numpy())
+                all_targets.append(targets.cpu().numpy())
 
         y_pred = np.concatenate(all_preds)
         y_true = np.concatenate(all_targets)
@@ -378,7 +384,7 @@ def main():
             print(f"  风险等级准确率: {level_acc:.2%}")
         else:
             from sklearn.metrics import classification_report
-            print(classification_report(y_true, y_pred, target_names=["ADL", "Fall"]))
+            print(classification_report(y_true, y_pred, target_names=["ADL", "Fall"], zero_division=0))
 
 
 if __name__ == "__main__":
