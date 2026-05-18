@@ -93,3 +93,16 @@ src/
 - **7月**: 风险评分模型 + 分级预警
 - **8月**: 整合 + 测试 + 文档
 - **9月5日前**: 提交
+
+## 🗂️ 长期协作与记录
+
+为了支持后续持续迭代、论文对照、实验追踪和仓库修改，新增了以下协作文档：
+
+- `docs/project-collaboration/long-term-workflow.md`
+  约定后续默认如何分析、排查、修改和记录。
+- `docs/project-collaboration/project-profile.md`
+  逐步沉淀项目结构、训练入口、评估口径、论文与代码映射等长期信息。
+- `docs/project-collaboration/session-template.md`
+  用于记录每次任务的目标、结论、改动和后续待办。
+
+后续随着代码、实验和论文分析继续推进，可以直接在这组文档上持续补充，不需要把长期项目上下文散落在聊天记录里。
