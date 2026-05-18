@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (large files)
+data/datasets/*
+data/raw/*
+data/processed/*
+!data/datasets/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Pretrained models
+yolov8n.pt
+*.pt
+!checkpoints/.gitkeep
+!src/**/*.pt
+
+# Results (keep structure, exclude outputs)
+results/*.json
+results/*.png
+results/*.html
+!results/.gitkeep
+
+# Training artifacts
+training_curve.png
+training_report.html
+*.pkl
+!results/.gitkeep
+
+# Model checkpoints
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Logs
+logs/
+runs/
+wandb/
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
