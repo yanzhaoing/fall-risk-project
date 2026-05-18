@@ -5,19 +5,22 @@
 输入一帧/一段序列 → 输出风险评分
 
 支持两种模式:
-1. LSTM 模式: 原始关键点 → LSTM → 风险分数
+1. 时序骨架模式: 原始关键点序列 → GaitRiskScorer / MultiModalRiskScorer → 风险分数
 2. 特征工程模式: 关键点 → GaitFeatureExtractor → MLP/GBDT → 风险分数
 """
-import torch
-import numpy as np
 import pickle
-from typing import Optional, Dict, Tuple
 from pathlib import Path
+from typing import Dict, Optional
 
-from config.settings import CFG_MODEL, CFG_RISK, CFG_TRAIN
-from src.models.risk_scoring import RiskScoreCalibrator, get_risk_level
+import numpy as np
+import torch
+
+from config.settings import CFG_MODEL, CFG_TRAIN
 from src.features.gait_features import GaitFeatureExtractor
 from src.models.feature_mlp import FeatureMLP
+from src.models.gait_analysis import GaitLSTM, GaitRiskScorer, GaitTransformer
+from src.models.multimodal_risk import MultiModalRiskScorer
+from src.models.risk_scoring import RiskScoreCalibrator, get_risk_level
 
 
 class FallRiskPredictor:
@@ -25,19 +28,20 @@ class FallRiskPredictor:
     跌倒风险预测器
 
     端到端的预测接口:
-    输入: 关键点序列 (T, 17, 3) 或 特征向量 (16,)
+    输入: 关键点序列 (T, 17, 3) 或 特征向量
     输出: 风险评分 + 风险等级 + 响应策略
 
     支持:
-    - LSTM 模式: 从 checkpoint 加载 GaitRiskScorer
-    - 特征工程模式: 从 checkpoint 加载 MLP/GBDT
-    - 通用模式: 接受任意模型
+    - 时序骨架回归模型（GaitRiskScorer）
+    - 多模态风险模型（MultiModalRiskScorer）
+    - 特征工程模型（FeatureMLP / GBR）
+    - 通用模式：接受任意已设置模型
 
     Args:
         checkpoint_path: 模型权重路径
         device: 推理设备
         user_id: 用户 ID（用于个性化基线）
-        model_type: "auto" | "lstm" | "feature_mlp" | "feature_gbr"
+        model_type: "auto" | "sequence" | "multimodal" | "feature_mlp" | "feature_gbr"
     """
 
     def __init__(
@@ -51,13 +55,12 @@ class FallRiskPredictor:
         self.user_id = user_id
         self.model = None
         self.model_type = model_type
-        self._scaler = None  # 默认无 scaler
+        self._scaler = None
         self.feature_extractor = GaitFeatureExtractor(fps=30.0)
 
         if checkpoint_path and Path(checkpoint_path).exists():
             self._load_model(checkpoint_path)
 
-        # 校准器
         self.calibrator = RiskScoreCalibrator()
 
     def _load_model(self, path: str):
@@ -65,27 +68,28 @@ class FallRiskPredictor:
         path = Path(path)
 
         if path.suffix == ".pt":
-            # PyTorch checkpoint — 可能是 LSTM 或 MLP
             ckpt = torch.load(path, map_location=self.device, weights_only=False)
             state = ckpt.get("model_state_dict", ckpt)
 
-            # 检测是否是 FeatureMLP
-            has_backbone = any("backbone" in k for k in state.keys())
-            has_regressor = any("regressor" in k for k in state.keys())
-            has_gait_backbone = any("gait_backbone" in k for k in state.keys())
-
-            if has_gait_backbone:
-                # MultiModalRiskScorer
+            if any(k.startswith("gait_backbone.") for k in state):
                 self.model_type = "multimodal"
-                # TODO: 需要重建模型架构再加载
-                print(f"[Predictor] 检测到多模态模型: {path}")
-            elif has_backbone and has_regressor:
-                # GaitRiskScorer (LSTM)
-                self.model_type = "lstm"
-                # TODO: 需要重建模型架构再加载
-                print(f"[Predictor] 检测到 LSTM 模型: {path}")
+                self.model = self._build_multimodal_model_from_state(state)
+                self.model.load_state_dict(state)
+                self.model.to(self.device)
+                self.model.eval()
+                print(f"[Predictor] 加载多模态风险模型: {path}")
+            elif any(k.startswith("backbone.") for k in state) and any(k.startswith("regressor.") for k in state):
+                self.model_type = "sequence"
+                self.model = self._build_gait_regressor_from_state(state)
+                self.model.load_state_dict(state)
+                self.model.to(self.device)
+                self.model.eval()
+                print(f"[Predictor] 加载时序风险模型: {path}")
+            elif any(k.startswith("classifier.") for k in state):
+                self.model_type = "unsupported_classification"
+                self.model = None
+                print(f"[Predictor] 检测到分类 checkpoint，当前预测器仅支持风险评分类 checkpoint: {path}")
             else:
-                # 可能是 FeatureMLP
                 self.model_type = "feature_mlp"
                 self.model = FeatureMLP()
                 self.model.load_state_dict(state)
@@ -94,13 +98,11 @@ class FallRiskPredictor:
                 print(f"[Predictor] 加载特征 MLP: {path}")
 
         elif path.suffix == ".pkl":
-            # GBR 模型
             self.model_type = "feature_gbr"
             with open(path, "rb") as f:
                 self.model = pickle.load(f)
             print(f"[Predictor] 加载 GBR 模型: {path}")
 
-        # 加载 scaler（如果有）
         scaler_path = path.parent / "feature_scaler.pkl"
         if scaler_path.exists():
             with open(scaler_path, "rb") as f:
@@ -109,12 +111,90 @@ class FallRiskPredictor:
         else:
             self._scaler = None
 
+    def _build_backbone_from_state(self, state: Dict[str, torch.Tensor], prefix: str):
+        """根据 state_dict 自动重建 gait backbone。"""
+        if any(k.startswith(f"{prefix}transformer.") for k in state):
+            input_dim = state[f"{prefix}input_proj.weight"].shape[1]
+            d_model = state[f"{prefix}input_proj.weight"].shape[0]
+            num_layers = len({
+                int(k.split(".")[3])
+                for k in state
+                if k.startswith(f"{prefix}transformer.layers.")
+            })
+            max_seq_len = state[f"{prefix}pos_encoding"].shape[1]
+            return GaitTransformer(
+                input_dim=input_dim,
+                d_model=d_model,
+                nhead=CFG_MODEL.TRANSFORMER_NHEAD,
+                num_layers=max(num_layers, 1),
+                dropout=CFG_MODEL.GAIT_DROPOUT,
+                max_seq_len=max_seq_len,
+            )
+
+        input_dim = state[f"{prefix}input_proj.0.weight"].shape[1]
+        hidden_dim = state[f"{prefix}input_proj.0.weight"].shape[0]
+        num_layers = len({
+            int(k.split("l")[-1].split("_")[0])
+            for k in state
+            if k.startswith(f"{prefix}lstm.weight_ih_l") and "reverse" not in k
+        })
+        bidirectional = any("reverse" in k for k in state if k.startswith(f"{prefix}lstm."))
+        return GaitLSTM(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_layers=max(num_layers, 1),
+            dropout=CFG_MODEL.GAIT_DROPOUT,
+            bidirectional=bidirectional,
+        )
+
+    def _build_gait_regressor_from_state(self, state: Dict[str, torch.Tensor]) -> GaitRiskScorer:
+        backbone = self._build_backbone_from_state(state, prefix="backbone.")
+        feat_dim = state["regressor.0.weight"].shape[1]
+        return GaitRiskScorer(backbone, feat_dim)
+
+    def _build_multimodal_model_from_state(self, state: Dict[str, torch.Tensor]) -> MultiModalRiskScorer:
+        backbone = self._build_backbone_from_state(state, prefix="gait_backbone.")
+        scene_dim = state["fusion.projections.1.weight"].shape[1]
+        fusion_dim = state["fusion.output_proj.weight"].shape[0]
+
+        if any(k.startswith("fusion.gates.") for k in state):
+            strategy = "gated"
+        elif any(k.startswith("fusion.attention_net.") for k in state):
+            strategy = "attention"
+        else:
+            strategy = "concat"
+
+        return MultiModalRiskScorer(
+            gait_backbone=backbone,
+            gait_dim=backbone.output_dim,
+            scene_dim=scene_dim,
+            fusion_dim=fusion_dim,
+            fusion_strategy=strategy,
+        )
+
     def set_model(self, model):
         """直接设置模型（不从文件加载）"""
         self.model = model
         if isinstance(model, torch.nn.Module):
             model.to(self.device)
             model.eval()
+
+    def _predict_raw_score_from_skeleton(self, skeleton: np.ndarray) -> float:
+        seq = skeleton.reshape(skeleton.shape[0], -1)
+        x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)
+
+        if self.model_type == "multimodal":
+            scene_dim = getattr(self.model, "scene_dim", 18)
+            scene = torch.zeros((1, scene_dim), dtype=torch.float32, device=self.device)
+            return float(self.model(x, scene).item())
+
+        return float(self.model(x).item())
+
+    def _predict_raw_score_from_features(self, features: np.ndarray) -> float:
+        if isinstance(self.model, torch.nn.Module):
+            x = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(self.device)
+            return float(self.model(x).item())
+        return float(self.model.predict(features.reshape(1, -1))[0])
 
     @torch.no_grad()
     def predict_from_keypoints(self, skeleton: np.ndarray) -> Dict:
@@ -130,29 +210,20 @@ class FallRiskPredictor:
         if self.model is None:
             return {"score": 0.0, "risk_level": "low", "error": "no model"}
 
-        # 提取特征
-        features = self.feature_extractor.extract_vector(skeleton)  # (16,)
+        skeleton = np.asarray(skeleton, dtype=np.float32)
+        features = self.feature_extractor.extract_vector(skeleton)
         features = np.nan_to_num(features, nan=0.0)
 
-        # 标准化（如果有 scaler）
-        if self._scaler is not None:
-            features = self._scaler.transform(features.reshape(1, -1)).flatten()
-
-        # 预测
-        if isinstance(self.model, torch.nn.Module):
-            x = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(self.device)
-            raw_score = self.model(x).item()
+        if self.model_type in {"sequence", "multimodal"}:
+            raw_score = self._predict_raw_score_from_skeleton(skeleton)
         else:
-            # GBR
-            raw_score = float(self.model.predict(features.reshape(1, -1))[0])
+            model_features = features
+            if self._scaler is not None:
+                model_features = self._scaler.transform(model_features.reshape(1, -1)).flatten()
+            raw_score = self._predict_raw_score_from_features(model_features)
 
         raw_score = float(np.clip(raw_score, 0, 100))
-
-        # 校准
-        calibrated_score = self.calibrator.calibrate(
-            raw_score, features, self.user_id
-        )
-
+        calibrated_score = self.calibrator.calibrate(raw_score, features, self.user_id)
         risk_level = get_risk_level(calibrated_score)
 
         return {
@@ -169,7 +240,7 @@ class FallRiskPredictor:
         从特征向量预测风险（兼容旧接口）
 
         Args:
-            features: 特征向量 (feature_dim,)
+            features: 特征向量
 
         Returns:
             预测结果字典
@@ -177,18 +248,21 @@ class FallRiskPredictor:
         if self.model is None:
             return {"score": 0.0, "risk_level": "low", "error": "no model"}
 
-        if isinstance(self.model, torch.nn.Module):
-            x = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(self.device)
-            raw_score = self.model(x).item()
-        else:
-            raw_score = float(self.model.predict(features.reshape(1, -1))[0])
+        if self.model_type in {"sequence", "multimodal"}:
+            return {
+                "score": 0.0,
+                "risk_level": "low",
+                "error": "sequence checkpoint requires keypoint sequence input",
+            }
 
+        features = np.asarray(features, dtype=np.float32)
+        model_features = features
+        if self._scaler is not None:
+            model_features = self._scaler.transform(model_features.reshape(1, -1)).flatten()
+
+        raw_score = self._predict_raw_score_from_features(model_features)
         raw_score = float(np.clip(raw_score, 0, 100))
-
-        calibrated_score = self.calibrator.calibrate(
-            raw_score, features, self.user_id
-        )
-
+        calibrated_score = self.calibrator.calibrate(raw_score, features, self.user_id)
         risk_level = get_risk_level(calibrated_score)
 
         return {
@@ -200,23 +274,17 @@ class FallRiskPredictor:
 
     def predict_sequence(self, feature_sequence: np.ndarray) -> Dict:
         """
-        序列预测（取最后一个时间步的评分）
-
-        Args:
-            feature_sequence: 特征序列, shape (seq_len, feature_dim)
-
-        Returns:
-            同 predict
+        兼容旧接口：
+        - 如果输入是骨架序列 (T, 17, 3)，直接调用 `predict_from_keypoints`
+        - 否则按特征序列处理，取最后一个时间步
         """
-        return self.predict(feature_sequence[-1])
+        arr = np.asarray(feature_sequence)
+        if arr.ndim == 3 and arr.shape[1] == 17:
+            return self.predict_from_keypoints(arr)
+        return self.predict(arr[-1])
 
     def update_baseline(self, normal_features: np.ndarray):
-        """
-        更新用户正常状态基线
-
-        Args:
-            normal_features: 正常状态特征, shape (N, feature_dim)
-        """
+        """更新用户正常状态基线"""
         if self.user_id:
             self.calibrator.update_baseline(self.user_id, normal_features)
             print(f"[Predictor] 已更新用户 {self.user_id} 的基线")
