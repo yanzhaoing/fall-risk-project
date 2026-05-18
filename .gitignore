@@ -27,6 +27,10 @@ data/processed/*
 !data/datasets/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/datasets/*/
+!data/datasets/**/.gitkeep
+!data/processed/*/
+!data/processed/**/.gitkeep
 
 # Pretrained models
 yolov8n.pt
