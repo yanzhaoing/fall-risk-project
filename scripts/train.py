@@ -26,29 +26,30 @@ if platform.system() == "Windows":
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, WeightedRandomSampler
 from config.settings import CFG_TRAIN, CFG_MODEL, CFG_DATA, CFG_PATHS
 from src.data.dataset import FallDetectionDataset, UPFallDataset
 from src.data.dataloader import create_dataloaders
 from src.data.augmentation import get_train_augmentor
+from src.data.risk_dataset import RiskAwareFallDataset
+from src.features.context_features import SCENE_FEATURE_DIM
 from src.models.gait_analysis import GaitLSTM, GaitTransformer, GaitRiskScorer
 from src.models.stgcn import STGCN, STGCNClassifier
-from src.models.multimodal_risk import MultiModalRiskScorer, build_multimodal_model
+from src.models.multimodal_risk import MultiModalRiskScorer
 from src.training.losses import FocalLoss, RiskScoreLoss
 from src.training.trainer import Trainer
-from src.training.metrics import compute_metrics, compute_risk_metrics, print_evaluation_report
 from src.utils.helpers import set_seed, get_device, count_parameters
 
 
 def load_ntu_dataset(data_dir: str, split: str = "train", max_samples: int = 0,
-                     risk_mode: bool = False, multimodal: bool = False) -> FallDetectionDataset:
+                     risk_mode: bool = False, multimodal: bool = False):
     """加载 NTU COCO 格式数据集"""
     data_path = Path(data_dir)
+    dataset_cls = RiskAwareFallDataset if (risk_mode or multimodal) else FallDetectionDataset
+
     if not data_path.exists():
         print(f"[ERROR] NTU 数据目录不存在: {data_path}")
-        return FallDetectionDataset([], risk_mode=risk_mode, multimodal=multimodal)
+        return dataset_cls([], risk_mode=risk_mode, multimodal=multimodal)
 
-    # 按被试划分 train/val/test (Subject_01-16: train, 17-20: val, 21-24: test)
     split_ranges = {
         "train": (1, 16),
         "val": (17, 20),
@@ -87,18 +88,17 @@ def load_ntu_dataset(data_dir: str, split: str = "train", max_samples: int = 0,
         if max_samples > 0 and loaded >= max_samples:
             break
 
-    # 统计
     fall_count = sum(1 for s in samples if s["label"] == 1)
     adl_count = sum(1 for s in samples if s["label"] == 0)
     if multimodal:
-        mode_str = "多模态（风险评分+环境特征）"
+        mode_str = "多模态（风险评分+真实上下文特征）"
     elif risk_mode:
-        mode_str = "风险评分"
+        mode_str = "风险评分（前置风险伪标签）"
     else:
         mode_str = "二分类"
     print(f"  [{split}] {len(samples)} 样本 | Fall: {fall_count} | ADL: {adl_count} | 模式: {mode_str}")
 
-    return FallDetectionDataset(samples, risk_mode=risk_mode, multimodal=multimodal)
+    return dataset_cls(samples, risk_mode=risk_mode, multimodal=multimodal)
 
 
 def build_model(model_name: str, input_dim: int, num_classes: int = 2,
@@ -113,20 +113,17 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
         )
 
         if task == "multimodal":
-            # 多模态模式：步态 + 环境/轨迹融合
             return MultiModalRiskScorer(
                 gait_backbone=backbone,
                 gait_dim=backbone.output_dim,
-                scene_dim=18,
+                scene_dim=SCENE_FEATURE_DIM,
                 fusion_dim=128,
                 fusion_strategy="gated",
             )
 
         if task == "regression":
-            # 回归模式：输出 0-100 风险分数
             return GaitRiskScorer(backbone, backbone.output_dim)
 
-        # 分类模式：输出 logits
         class GaitLSTMClassifier(torch.nn.Module):
             def __init__(self, backbone, feat_dim, num_classes):
                 super().__init__()
@@ -139,7 +136,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
 
         return GaitLSTMClassifier(backbone, backbone.output_dim, num_classes)
 
-    elif model_name == "gait_transformer":
+    if model_name == "gait_transformer":
         backbone = GaitTransformer(
             input_dim=input_dim,
             d_model=CFG_MODEL.TRANSFORMER_D_MODEL,
@@ -151,7 +148,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
             return MultiModalRiskScorer(
                 gait_backbone=backbone,
                 gait_dim=backbone.output_dim,
-                scene_dim=18,
+                scene_dim=SCENE_FEATURE_DIM,
                 fusion_dim=128,
                 fusion_strategy="gated",
             )
@@ -171,7 +168,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
 
         return GaitTransformerClassifier(backbone, num_classes)
 
-    elif model_name == "stgcn":
+    if model_name == "stgcn":
         backbone = STGCN(
             input_dim=3,
             num_nodes=CFG_DATA.NUM_KEYPOINTS,
@@ -185,7 +182,7 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
             return MultiModalRiskScorer(
                 gait_backbone=backbone,
                 gait_dim=backbone.output_dim,
-                scene_dim=18,
+                scene_dim=SCENE_FEATURE_DIM,
                 fusion_dim=128,
                 fusion_strategy="gated",
             )
@@ -195,32 +192,26 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
 
         return STGCNClassifier(backbone, num_classes)
 
-    else:
-        raise ValueError(f"未知模型: {model_name}")
+    raise ValueError(f"未知模型: {model_name}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="跌倒风险模型训练")
     parser.add_argument("--model", default="gait_lstm", choices=["gait_lstm", "gait_transformer", "stgcn"])
     parser.add_argument("--task", default="classification", choices=["classification", "regression", "multimodal"],
-                        help="classification=二分类 | regression=0-100风险评分 | multimodal=步态+环境融合")
+                        help="classification=二分类 | regression=0-100风险评分 | multimodal=步态+上下文融合")
     parser.add_argument("--dataset", default="ntu", choices=["ntu", "upfall"])
-    parser.add_argument("--data-dir", default=str(CFG_PATHS.PROCESSED_DIR / "ntu_coco"),
-                        help="NTU 数据目录")
+    parser.add_argument("--data-dir", default=str(CFG_PATHS.PROCESSED_DIR / "ntu_coco"), help="NTU 数据目录")
     parser.add_argument("--epochs", type=int, default=CFG_TRAIN.EPOCHS)
     parser.add_argument("--batch-size", type=int, default=CFG_TRAIN.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=CFG_TRAIN.LEARNING_RATE)
     parser.add_argument("--device", default=CFG_TRAIN.DEVICE)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-samples", type=int, default=0,
-                        help="最多加载多少样本（0=全部，调试用）")
-    parser.add_argument("--pretrained-backbone", default="",
-                        help="预训练骨干权重路径（多模态微调用）")
-    parser.add_argument("--freeze-gait", action="store_true",
-                        help="冻结步态骨干（多模态微调时用）")
+    parser.add_argument("--max-samples", type=int, default=0, help="最多加载多少样本（0=全部，调试用）")
+    parser.add_argument("--pretrained-backbone", default="", help="预训练骨干权重路径（多模态微调用）")
+    parser.add_argument("--freeze-gait", action="store_true", help="冻结步态骨干（多模态微调时用）")
     args = parser.parse_args()
 
-    # 设置种子
     set_seed(args.seed)
     device = get_device(args.device)
 
@@ -228,48 +219,38 @@ def main():
     is_multimodal = (args.task == "multimodal")
     print(f"[训练] 模型: {args.model} | 任务: {args.task} | 数据集: {args.dataset} | 设备: {device} | 轮数: {args.epochs}")
 
-    # 加载数据集
     if args.dataset == "ntu":
         print(f"[数据] 加载 NTU 数据: {args.data_dir}")
-        train_dataset = load_ntu_dataset(args.data_dir, split="train",
-                                          max_samples=args.max_samples,
-                                          risk_mode=is_regression,
-                                          multimodal=is_multimodal)
-        val_dataset = load_ntu_dataset(args.data_dir, split="val",
-                                        max_samples=args.max_samples,
-                                        risk_mode=is_regression,
-                                        multimodal=is_multimodal)
-        # 测试集
-        test_dataset = load_ntu_dataset(args.data_dir, split="test",
-                                         max_samples=args.max_samples,
-                                         risk_mode=is_regression,
-                                         multimodal=is_multimodal)
+        train_dataset = load_ntu_dataset(args.data_dir, split="train", max_samples=args.max_samples,
+                                         risk_mode=is_regression, multimodal=is_multimodal)
+        val_dataset = load_ntu_dataset(args.data_dir, split="val", max_samples=args.max_samples,
+                                       risk_mode=is_regression, multimodal=is_multimodal)
+        test_dataset = load_ntu_dataset(args.data_dir, split="test", max_samples=args.max_samples,
+                                        risk_mode=is_regression, multimodal=is_multimodal)
         train_dataset.transform = get_train_augmentor()
     else:
         train_dataset = UPFallDataset(split="train", transform=get_train_augmentor())
         val_dataset = UPFallDataset(split="val")
         test_dataset = None
+        if is_regression:
+            print("⚠️ [WARNING] 当前更完整的前置风险标签与 scene/context 特征仅接入 NTU 主线。")
 
     if len(train_dataset) == 0:
         print("[ERROR] 训练集为空！")
         return
 
-    # 创建 DataLoader
     loaders = create_dataloaders(
         train_dataset, val_dataset, test_dataset,
         batch_size=args.batch_size,
-        use_weighted_sampling=not is_regression,  # 回归模式不用加权采样
+        use_weighted_sampling=not is_regression,
     )
 
-    # 构建模型
-    input_dim = CFG_DATA.NUM_KEYPOINTS * 3  # 17 * 3 = 51
+    input_dim = CFG_DATA.NUM_KEYPOINTS * 3
     model = build_model(args.model, input_dim, num_classes=2, task=args.task)
 
-    # 加载预训练骨干（多模态微调）
     if args.pretrained_backbone and Path(args.pretrained_backbone).exists():
         ckpt = torch.load(args.pretrained_backbone, map_location=device, weights_only=False)
         state = ckpt.get("model_state_dict", ckpt)
-        # 尝试加载骨干部分（忽略不匹配的层）
         if hasattr(model, "gait_backbone"):
             backbone_state = {k.replace("backbone.", "gait_backbone."): v for k, v in state.items()
                               if k.startswith("backbone.")}
@@ -277,7 +258,6 @@ def main():
             print(f"[训练] 加载预训练骨干: {args.pretrained_backbone}")
             print(f"  加载: {len(backbone_state)} 层 | 缺失: {len(missing)} | 多余: {len(unexpected)}")
 
-    # 冻结步态骨干
     if args.freeze_gait and hasattr(model, "gait_backbone"):
         for p in model.gait_backbone.parameters():
             p.requires_grad = False
@@ -285,52 +265,24 @@ def main():
         total = sum(p.numel() for p in model.parameters())
         print(f"[训练] 步态骨干已冻结 | 可训练: {trainable:,}/{total:,} ({trainable/total*100:.1f}%)")
 
-    # 多模态警告
     if is_multimodal and args.dataset == "ntu":
-        print("⚠️ [WARNING] 多模态模式 + NTU 数据集 = 环境特征全为零")
-        print("  门控融合将学会忽略环境通道。")
-        print("  建议: 先用 --task regression 训练步态骨干，")
-        print("  再用 --task multimodal --pretrained-backbone --freeze-gait 微调。")
+        print("[训练] 多模态上下文特征已启用：不再使用全零 scene_feat。")
+        print("  当前特征来自骨架轨迹、姿态稳定性和可推断的房间先验。")
 
     model = model.to(device)
     print(f"[训练] 参数量: {count_parameters(model):,}")
 
-    # 损失函数
-    if is_regression:
-        criterion = RiskScoreLoss(mse_weight=1.0, ranking_weight=0.5, margin=10.0)
-    else:
-        criterion = FocalLoss()
+    criterion = RiskScoreLoss(mse_weight=1.0, ranking_weight=0.5, margin=10.0) if is_regression else FocalLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=CFG_TRAIN.WEIGHT_DECAY)
 
-    # 优化器
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=CFG_TRAIN.WEIGHT_DECAY
-    )
-
-    # 学习率调度（5 epoch warmup + cosine decay）
     warmup_epochs = min(5, args.epochs // 10)
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1, total_iters=warmup_epochs
-    )
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs - warmup_epochs
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
-    )
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=warmup_epochs)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - warmup_epochs)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
 
-    # 训练
-    trainer = Trainer(
-        model=model,
-        criterion=criterion,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        device=str(device),
-        task=args.task,
-    )
-
+    trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, scheduler=scheduler, device=str(device), task=args.task)
     trainer.train(loaders["train"], loaders["val"], epochs=args.epochs)
 
-    # ─── 测试集评估 ───────────────────────────────────────
     if "test" in loaders:
         print("\n" + "=" * 50)
         print("  测试集评估")
@@ -366,19 +318,19 @@ def main():
         y_true = np.concatenate(all_targets)
 
         if is_regression:
+            from src.training.metrics import compute_risk_metrics
             metrics = compute_risk_metrics(y_pred, y_true)
             print(f"  MAE:        {metrics['mae']:.2f}")
             print(f"  RMSE:       {metrics['rmse']:.2f}")
             print(f"  Spearman:   {metrics['spearman']:.4f}")
             print(f"  Correlation:{metrics['correlation']:.4f}")
+            print(f"  ±10 分命中率: {metrics['within_10']:.2%}")
+            print(f"  ±20 分命中率: {metrics['within_20']:.2%}")
 
-            # 风险等级准确率
             from src.models.risk_scoring import get_risk_level
             level_correct = 0
             for pred, true in zip(y_pred, y_true):
-                pred_level = get_risk_level(float(pred))
-                true_level = get_risk_level(float(true))
-                if pred_level == true_level:
+                if get_risk_level(float(pred)) == get_risk_level(float(true)):
                     level_correct += 1
             level_acc = level_correct / len(y_pred)
             print(f"  风险等级准确率: {level_acc:.2%}")
