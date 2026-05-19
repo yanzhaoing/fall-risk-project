@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, average_precision_score,
-    confusion_matrix, classification_report,
+    confusion_matrix,
 )
 from scipy.stats import spearmanr
 
@@ -23,36 +23,21 @@ def compute_metrics(
     y_prob: Optional[np.ndarray] = None,
     risk_scores: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
-    """
-    计算全面的评估指标
-
-    Args:
-        y_true: 真实标签 (0/1)
-        y_pred: 预测标签 (0/1)
-        y_prob: 预测概率（用于 AUC）
-        risk_scores: 连续风险评分（可选）
-
-    Returns:
-        指标字典
-    """
     metrics = {}
 
-    # 基础分类指标
     metrics["accuracy"] = accuracy_score(y_true, y_pred)
     metrics["precision"] = precision_score(y_true, y_pred, zero_division=0)
     metrics["recall"] = recall_score(y_true, y_pred, zero_division=0)
     metrics["f1"] = f1_score(y_true, y_pred, zero_division=0)
 
-    # 特异度（真负率）— 对误报率很重要
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     if cm.shape == (2, 2):
         tn, fp, fn, tp = cm.ravel()
         metrics["specificity"] = tn / (tn + fp + 1e-8)
-        metrics["sensitivity"] = tp / (tp + fn + 1e-8)  # 同 recall
+        metrics["sensitivity"] = tp / (tp + fn + 1e-8)
         metrics["false_positive_rate"] = fp / (fp + tn + 1e-8)
         metrics["false_negative_rate"] = fn / (fn + tp + 1e-8)
 
-    # AUC 指标（需要概率）
     if y_prob is not None:
         try:
             metrics["auc_roc"] = roc_auc_score(y_true, y_prob)
@@ -61,15 +46,10 @@ def compute_metrics(
             metrics["auc_roc"] = 0.0
             metrics["auc_pr"] = 0.0
 
-    # 风险评分回归指标（如果有）
     if risk_scores is not None:
-        # 假设 y_true 的 0/1 可以看作粗略的风险参考
-        # 真实的风险评分需要单独标注
         metrics["risk_score_mean_fall"] = risk_scores[y_true == 1].mean() if (y_true == 1).any() else 0
         metrics["risk_score_mean_adl"] = risk_scores[y_true == 0].mean() if (y_true == 0).any() else 0
-        metrics["risk_score_separation"] = (
-            metrics["risk_score_mean_fall"] - metrics["risk_score_mean_adl"]
-        )
+        metrics["risk_score_separation"] = metrics["risk_score_mean_fall"] - metrics["risk_score_mean_adl"]
 
     return metrics
 
@@ -78,19 +58,9 @@ def compute_risk_metrics(
     pred_scores: np.ndarray,
     true_scores: np.ndarray,
 ) -> Dict[str, float]:
-    """
-    计算风险评分的回归指标
-
-    Args:
-        pred_scores: 预测风险评分
-        true_scores: 真实风险评分
-
-    Returns:
-        回归指标字典
-    """
     error = pred_scores - true_scores
+    abs_error = np.abs(error)
 
-    # Spearman 相关系数（衡量排序一致性）
     try:
         spearman_corr, spearman_p = spearmanr(pred_scores, true_scores)
         if np.isnan(spearman_corr):
@@ -98,7 +68,6 @@ def compute_risk_metrics(
     except Exception:
         spearman_corr, spearman_p = 0.0, 1.0
 
-    # Pearson 相关系数（处理 NaN）
     try:
         corr = np.corrcoef(pred_scores, true_scores)[0, 1]
         if np.isnan(corr):
@@ -107,13 +76,16 @@ def compute_risk_metrics(
         corr = 0.0
 
     return {
-        "mae": float(np.mean(np.abs(error))),
+        "mae": float(np.mean(abs_error)),
         "rmse": float(np.sqrt(np.mean(error ** 2))),
         "mse": float(np.mean(error ** 2)),
-        "max_error": float(np.max(np.abs(error))),
+        "max_error": float(np.max(abs_error)),
         "correlation": float(corr),
         "spearman": float(spearman_corr),
         "spearman_p": float(spearman_p),
+        "within_5": float(np.mean(abs_error <= 5.0)),
+        "within_10": float(np.mean(abs_error <= 10.0)),
+        "within_20": float(np.mean(abs_error <= 20.0)),
     }
 
 
@@ -121,7 +93,6 @@ def print_evaluation_report(
     metrics: Dict[str, float],
     title: str = "评估报告",
 ):
-    """格式化打印评估报告"""
     print(f"\n{'=' * 50}")
     print(f"  {title}")
     print(f"{'=' * 50}")
@@ -130,7 +101,7 @@ def print_evaluation_report(
         "分类指标": ["accuracy", "precision", "recall", "f1", "specificity"],
         "AUC 指标": ["auc_roc", "auc_pr"],
         "误报分析": ["false_positive_rate", "false_negative_rate"],
-        "风险评分": ["risk_score_mean_fall", "risk_score_mean_adl", "risk_score_separation"],
+        "风险评分": ["mae", "rmse", "spearman", "correlation", "within_10", "within_20"],
     }
 
     for section_name, keys in sections.items():
