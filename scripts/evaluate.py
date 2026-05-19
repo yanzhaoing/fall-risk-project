@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """
 测试集评估脚本
-
-用法:
-    python scripts/evaluate.py --model gait_lstm --task classification --dataset ntu
-    python scripts/evaluate.py --model gait_lstm --task regression --checkpoint checkpoints/best_model.pt
 """
 import sys
 import argparse
@@ -19,6 +15,8 @@ from torch.utils.data import DataLoader
 
 from config.settings import CFG_TRAIN, CFG_MODEL, CFG_DATA, CFG_PATHS
 from src.data.dataset import FallDetectionDataset, UPFallDataset
+from src.data.risk_dataset import RiskAwareFallDataset
+from src.features.context_features import SCENE_FEATURE_DIM
 from src.models.gait_analysis import GaitLSTM, GaitTransformer, GaitRiskScorer
 from src.models.stgcn import STGCN, STGCNClassifier
 from src.models.multimodal_risk import MultiModalRiskScorer
@@ -29,12 +27,13 @@ from src.models.risk_scoring import get_risk_level
 
 
 def load_ntu_dataset(data_dir: str, split: str = "test",
-                     risk_mode: bool = False, multimodal: bool = False) -> FallDetectionDataset:
+                     risk_mode: bool = False, multimodal: bool = False):
     """加载 NTU 数据集"""
     data_path = Path(data_dir)
+    dataset_cls = RiskAwareFallDataset if (risk_mode or multimodal) else FallDetectionDataset
     if not data_path.exists():
         print(f"[ERROR] 数据目录不存在: {data_path}")
-        return FallDetectionDataset([], risk_mode=risk_mode, multimodal=multimodal)
+        return dataset_cls([], risk_mode=risk_mode, multimodal=multimodal)
 
     split_ranges = {
         "train": (1, 16),
@@ -69,37 +68,20 @@ def load_ntu_dataset(data_dir: str, split: str = "test",
 
     fall_count = sum(1 for s in samples if s["label"] == 1)
     adl_count = sum(1 for s in samples if s["label"] == 0)
-    if multimodal:
-        mode_str = "多模态"
-    elif risk_mode:
-        mode_str = "风险评分"
-    else:
-        mode_str = "二分类"
+    mode_str = "多模态" if multimodal else "风险评分" if risk_mode else "二分类"
     print(f"  [{split}] {len(samples)} 样本 | Fall: {fall_count} | ADL: {adl_count} | 模式: {mode_str}")
 
-    return FallDetectionDataset(samples, risk_mode=risk_mode, multimodal=multimodal)
+    return dataset_cls(samples, risk_mode=risk_mode, multimodal=multimodal)
 
 
 def build_model(model_name: str, input_dim: int, num_classes: int = 2,
                 task: str = "classification") -> torch.nn.Module:
-    """构建模型"""
     if model_name == "gait_lstm":
-        backbone = GaitLSTM(
-            input_dim=input_dim,
-            hidden_dim=CFG_MODEL.GAIT_HIDDEN_DIM,
-            num_layers=CFG_MODEL.GAIT_NUM_LAYERS,
-            dropout=CFG_MODEL.GAIT_DROPOUT,
-        )
-
+        backbone = GaitLSTM(input_dim=input_dim, hidden_dim=CFG_MODEL.GAIT_HIDDEN_DIM,
+                            num_layers=CFG_MODEL.GAIT_NUM_LAYERS, dropout=CFG_MODEL.GAIT_DROPOUT)
         if task == "multimodal":
-            return MultiModalRiskScorer(
-                gait_backbone=backbone,
-                gait_dim=backbone.output_dim,
-                scene_dim=18,
-                fusion_dim=128,
-                fusion_strategy="gated",
-            )
-
+            return MultiModalRiskScorer(gait_backbone=backbone, gait_dim=backbone.output_dim,
+                                        scene_dim=SCENE_FEATURE_DIM, fusion_dim=128, fusion_strategy="gated")
         if task == "regression":
             return GaitRiskScorer(backbone, backbone.output_dim)
 
@@ -115,23 +97,12 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
 
         return GaitLSTMClassifier(backbone, backbone.output_dim, num_classes)
 
-    elif model_name == "gait_transformer":
-        backbone = GaitTransformer(
-            input_dim=input_dim,
-            d_model=CFG_MODEL.TRANSFORMER_D_MODEL,
-            nhead=CFG_MODEL.TRANSFORMER_NHEAD,
-            num_layers=CFG_MODEL.TRANSFORMER_NUM_LAYERS,
-        )
-
+    if model_name == "gait_transformer":
+        backbone = GaitTransformer(input_dim=input_dim, d_model=CFG_MODEL.TRANSFORMER_D_MODEL,
+                                   nhead=CFG_MODEL.TRANSFORMER_NHEAD, num_layers=CFG_MODEL.TRANSFORMER_NUM_LAYERS)
         if task == "multimodal":
-            return MultiModalRiskScorer(
-                gait_backbone=backbone,
-                gait_dim=backbone.output_dim,
-                scene_dim=18,
-                fusion_dim=128,
-                fusion_strategy="gated",
-            )
-
+            return MultiModalRiskScorer(gait_backbone=backbone, gait_dim=backbone.output_dim,
+                                        scene_dim=SCENE_FEATURE_DIM, fusion_dim=128, fusion_strategy="gated")
         if task == "regression":
             return GaitRiskScorer(backbone, backbone.output_dim)
 
@@ -147,45 +118,30 @@ def build_model(model_name: str, input_dim: int, num_classes: int = 2,
 
         return GaitTransformerClassifier(backbone, num_classes)
 
-    elif model_name == "stgcn":
-        backbone = STGCN(
-            input_dim=3,
-            num_nodes=CFG_DATA.NUM_KEYPOINTS,
-            base_channels=CFG_MODEL.STGCN_BASE_CHANNELS,
-            num_stages=CFG_MODEL.STGCN_NUM_STAGES,
-            temporal_kernel=CFG_MODEL.STGCN_TEMPORAL_KERNEL,
-            dropout=CFG_MODEL.STGCN_DROPOUT,
-        )
-
+    if model_name == "stgcn":
+        backbone = STGCN(input_dim=3, num_nodes=CFG_DATA.NUM_KEYPOINTS,
+                         base_channels=CFG_MODEL.STGCN_BASE_CHANNELS,
+                         num_stages=CFG_MODEL.STGCN_NUM_STAGES,
+                         temporal_kernel=CFG_MODEL.STGCN_TEMPORAL_KERNEL,
+                         dropout=CFG_MODEL.STGCN_DROPOUT)
         if task == "multimodal":
-            return MultiModalRiskScorer(
-                gait_backbone=backbone,
-                gait_dim=backbone.output_dim,
-                scene_dim=18,
-                fusion_dim=128,
-                fusion_strategy="gated",
-            )
-
+            return MultiModalRiskScorer(gait_backbone=backbone, gait_dim=backbone.output_dim,
+                                        scene_dim=SCENE_FEATURE_DIM, fusion_dim=128, fusion_strategy="gated")
         if task == "regression":
             return GaitRiskScorer(backbone, backbone.output_dim)
-
         return STGCNClassifier(backbone, num_classes)
 
-    else:
-        raise ValueError(f"未知模型: {model_name}")
+    raise ValueError(f"未知模型: {model_name}")
 
 
 def evaluate(model, dataloader, device, task="classification", criterion=None):
-    """在测试集上评估"""
     is_regression = task in ["regression", "multimodal"]
     model.eval()
     total_loss = 0.0
     num_batches = 0
 
     if is_regression:
-        all_preds = []
-        all_targets = []
-
+        all_preds, all_targets = [], []
         with torch.no_grad():
             for batch in dataloader:
                 if len(batch) == 4:
@@ -226,32 +182,23 @@ def evaluate(model, dataloader, device, task="classification", criterion=None):
         y_true = np.concatenate(all_targets)
         avg_loss = total_loss / max(num_batches, 1) if num_batches > 0 else 0.0
         metrics = compute_risk_metrics(y_pred, y_true)
-        level_correct = sum(
-            get_risk_level(float(pred)) == get_risk_level(float(true))
-            for pred, true in zip(y_pred, y_true)
-        )
+        level_correct = sum(get_risk_level(float(pred)) == get_risk_level(float(true)) for pred, true in zip(y_pred, y_true))
         metrics["level_accuracy"] = level_correct / max(len(y_pred), 1)
         return metrics, y_true, y_pred, avg_loss
 
-    all_preds = []
-    all_targets = []
-    all_probs = []
-
+    all_preds, all_targets, all_probs = [], [], []
     with torch.no_grad():
         for batch in dataloader:
             inputs, targets = batch
             inputs = inputs.to(device)
             targets = targets.to(device)
-
             outputs = model(inputs)
             if criterion:
                 loss = criterion(outputs, targets)
                 total_loss += loss.item()
                 num_batches += 1
-
             probs = torch.softmax(outputs, dim=1)
             preds = outputs.argmax(dim=1)
-
             all_preds.append(preds.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
             all_probs.append(probs[:, 1].cpu().numpy())
@@ -264,12 +211,10 @@ def evaluate(model, dataloader, device, task="classification", criterion=None):
 
     from sklearn.metrics import confusion_matrix
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-
     return metrics, cm, y_true, y_pred, y_prob, avg_loss
 
 
 def print_confusion_matrix(cm, labels=["ADL", "Fall"]):
-    """打印混淆矩阵"""
     print("\n  混淆矩阵:")
     print(f"  {'':12s}  {'预测 ADL':>10s}  {'预测 Fall':>10s}")
     print(f"  {'真实 ADL':12s}  {cm[0,0]:>10d}  {cm[0,1]:>10d}")
@@ -282,15 +227,12 @@ def main():
     parser.add_argument("--task", default="classification", choices=["classification", "regression", "multimodal"])
     parser.add_argument("--dataset", default="ntu", choices=["ntu", "upfall"])
     parser.add_argument("--data-dir", default=str(CFG_PATHS.PROCESSED_DIR / "ntu_coco"))
-    parser.add_argument("--checkpoint", default=str(CFG_PATHS.CHECKPOINTS_DIR / "best_model.pt"),
-                        help="模型检查点路径")
+    parser.add_argument("--checkpoint", default=str(CFG_PATHS.CHECKPOINTS_DIR / "best_model.pt"), help="模型检查点路径")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", default=CFG_TRAIN.DEVICE)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output", default=str(Path(__file__).parent.parent / "results" / "test_results.json"),
-                        help="结果保存路径")
-    parser.add_argument("--search-threshold", action="store_true",
-                        help="仅分类任务有效：搜索最优分类阈值")
+    parser.add_argument("--output", default=str(Path(__file__).parent.parent / "results" / "test_results.json"), help="结果保存路径")
+    parser.add_argument("--search-threshold", action="store_true", help="仅分类任务有效：搜索最优分类阈值")
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -309,9 +251,7 @@ def main():
 
     print("[数据] 加载测试集...")
     if args.dataset == "ntu":
-        test_dataset = load_ntu_dataset(args.data_dir, split="test",
-                                        risk_mode=is_regression,
-                                        multimodal=is_multimodal)
+        test_dataset = load_ntu_dataset(args.data_dir, split="test", risk_mode=is_regression, multimodal=is_multimodal)
     else:
         test_dataset = UPFallDataset(split="test")
 
@@ -320,10 +260,8 @@ def main():
         return
 
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
-
     input_dim = CFG_DATA.NUM_KEYPOINTS * 3
-    model = build_model(args.model, input_dim, num_classes=2, task=args.task)
-    model = model.to(device)
+    model = build_model(args.model, input_dim, num_classes=2, task=args.task).to(device)
 
     checkpoint_path = Path(args.checkpoint)
     if not checkpoint_path.exists():
@@ -337,10 +275,7 @@ def main():
 
     if is_regression:
         criterion = RiskScoreLoss(mse_weight=1.0, ranking_weight=0.5, margin=10.0)
-        metrics, y_true, y_pred, avg_loss = evaluate(
-            model, test_loader, device, task=args.task, criterion=criterion
-        )
-
+        metrics, y_true, y_pred, avg_loss = evaluate(model, test_loader, device, task=args.task, criterion=criterion)
         print(f"\n{'='*60}")
         print("  测试结果")
         print(f"{'='*60}")
@@ -349,6 +284,8 @@ def main():
         print(f"  RMSE: {metrics['rmse']:.4f}")
         print(f"  Spearman: {metrics['spearman']:.4f}")
         print(f"  Correlation: {metrics['correlation']:.4f}")
+        print(f"  ±10 分命中率: {metrics['within_10']:.2%}")
+        print(f"  ±20 分命中率: {metrics['within_20']:.2%}")
         print(f"  风险等级准确率: {metrics['level_accuracy']:.2%}")
 
         output_path = Path(args.output)
@@ -368,9 +305,7 @@ def main():
         return metrics
 
     criterion = FocalLoss()
-    metrics, cm, y_true, y_pred, y_prob, avg_loss = evaluate(
-        model, test_loader, device, task=args.task, criterion=criterion
-    )
+    metrics, cm, y_true, y_pred, y_prob, avg_loss = evaluate(model, test_loader, device, task=args.task, criterion=criterion)
 
     if args.search_threshold:
         from sklearn.metrics import f1_score, precision_score, recall_score
@@ -394,7 +329,6 @@ def main():
                 tn, fp, fn, tp = cm_thr.ravel()
             else:
                 tp = fp = fn = tn = 0
-
             marker = " ★" if f1 > best_f1 else ""
             if f1 > best_f1:
                 best_f1 = f1
@@ -402,7 +336,6 @@ def main():
             print(f"  {thr:>6.2f}  {p:>10.4f}  {r:>10.4f}  {f1:>10.4f}  {tp:>5d}  {fp:>5d}  {fn:>5d}{marker}")
 
         print(f"\n  ★ 最优阈值: {best_threshold:.2f} | F1: {best_f1:.4f}")
-
         y_pred_best = (y_prob >= best_threshold).astype(int)
         cm_best = cm_fn(y_true, y_pred_best, labels=[0, 1])
         metrics_best = compute_metrics(y_true, y_pred_best, y_prob)
