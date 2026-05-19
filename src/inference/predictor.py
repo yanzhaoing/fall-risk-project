@@ -16,6 +16,7 @@ import numpy as np
 import torch
 
 from config.settings import CFG_MODEL, CFG_TRAIN
+from src.features.context_features import SCENE_FEATURE_DIM, extract_scene_features
 from src.features.gait_features import GaitFeatureExtractor
 from src.models.feature_mlp import FeatureMLP
 from src.models.gait_analysis import GaitLSTM, GaitRiskScorer, GaitTransformer
@@ -184,8 +185,14 @@ class FallRiskPredictor:
         x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)
 
         if self.model_type == "multimodal":
-            scene_dim = getattr(self.model, "scene_dim", 18)
-            scene = torch.zeros((1, scene_dim), dtype=torch.float32, device=self.device)
+            scene_dim = getattr(self.model, "scene_dim", SCENE_FEATURE_DIM)
+            scene_features = extract_scene_features(skeleton)
+            if scene_features.shape[0] != scene_dim:
+                resized = np.zeros(scene_dim, dtype=np.float32)
+                copy_dim = min(scene_dim, scene_features.shape[0])
+                resized[:copy_dim] = scene_features[:copy_dim]
+                scene_features = resized
+            scene = torch.tensor(scene_features, dtype=torch.float32).unsqueeze(0).to(self.device)
             return float(self.model(x, scene).item())
 
         return float(self.model(x).item())
@@ -213,6 +220,7 @@ class FallRiskPredictor:
         skeleton = np.asarray(skeleton, dtype=np.float32)
         features = self.feature_extractor.extract_vector(skeleton)
         features = np.nan_to_num(features, nan=0.0)
+        scene_features = extract_scene_features(skeleton)
 
         if self.model_type in {"sequence", "multimodal"}:
             raw_score = self._predict_raw_score_from_skeleton(skeleton)
@@ -226,13 +234,16 @@ class FallRiskPredictor:
         calibrated_score = self.calibrator.calibrate(raw_score, features, self.user_id)
         risk_level = get_risk_level(calibrated_score)
 
-        return {
+        result = {
             "score": round(calibrated_score, 2),
             "risk_level": risk_level,
             "raw_score": round(raw_score, 2),
             "features": features.tolist(),
             "calibrated": self.user_id is not None,
         }
+        if self.model_type == "multimodal":
+            result["scene_features"] = scene_features.tolist()
+        return result
 
     @torch.no_grad()
     def predict(self, features: np.ndarray) -> Dict:
