@@ -1,238 +1,94 @@
-# 🏥 老年人跌倒风险前置预警系统
+# 老人跌倒风险预测项目
 
-> 挑战杯"揭榜挂帅"擂台赛 XH-202617  
-> 基于多模态 AI 监测的老年人跌倒风险、心理健康、诈骗识别及预警研究  
-> 发榜单位：海康威视 / 萤石
+本项目面向 XH-202617 赛题中的“跌倒风险”方向，目标是在居家养老场景下实现：
 
-## 📌 项目概述
+- 跌倒前风险预判
+- 过程识别与持续监测
+- 分级预警与响应闭环
+- 面向比赛提交的可运行演示与验证材料
 
-本项目聚焦**跌倒风险前置预判**，不是事后检测跌倒事件，而是在跌倒发生**之前**评估风险等级，实现提前预警。
+## 当前项目定位
 
-当前仓库已经形成三条并行能力：
+当前仓库包含两条并行能力链路：
 
-1. **二分类基线**：正常 / 跌倒
-2. **连续风险评分**：输出 0-100 风险分数
-3. **多模态风险评分**：步态表征与环境 / 轨迹特征融合
+1. 模型链路
+- 骨架时序模型：`scripts/train.py`
+- 步态特征模型：`scripts/train_feature_model.py`
+- 测试评估：`scripts/evaluate.py`、`scripts/evaluate_public_ntu.py`
 
-## 🧠 当前技术路线
+2. 系统演示链路
+- 比赛演示服务：`scripts/serve_demo.py`
+- 内置系统评测：`scripts/evaluate_competition_demo.py`
+- 视频/摄像头演示入口：`scripts/demo.py`
 
-```text
-视频流 / 摄像头 / 萤石设备
-    -> 人体检测（YOLOv8）
-    -> 姿态估计（MediaPipe；HRNet 接口预留）
-    -> 骨架时序建模（LSTM / Transformer / ST-GCN）
-    -> 风险评分（分类 / 回归 / 多模态融合）
-    -> 风险等级划分、时间平滑、事件处理
-```
+## 推荐参赛主线
 
-## 🚀 快速开始
+面向初审，优先采用“可解释步态特征 + 风险评分 + 分级预警 + 演示系统”的路线：
 
-### 环境要求
+- 公开骨架数据用于离线验证
+- 特征模型用于稳定输出风险分数
+- 预警模块负责四级分级与响应动作
+- 演示系统展示前置预警、环境风险、视频分析与闭环逻辑
 
-- Python 3.10+
-- CUDA 11.8+（推荐）
-- PyTorch 2.0+
+这条路线的优势是更容易形成完整系统，也更容易产出可解释的报告与测试材料。
 
-### 安装
+## 快速开始
+
+安装依赖：
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 配置来源
-
-当前仓库默认配置入口是：
-
-- `config/settings.py`
-
-仓库中**没有** `config/risk_model.yaml`，训练与评估脚本主要通过：
-
-- `config/settings.py` 中的默认值
-- 命令行参数覆盖
-
-来控制运行行为。
-
-## 📦 数据准备
-
-### 数据集辅助脚本
+启动比赛演示服务：
 
 ```bash
-python scripts/download_data.py --dataset upfall
-python scripts/download_data.py --dataset le2i
-python scripts/download_data.py --dataset all
+python -B scripts/serve_demo.py
 ```
 
-说明：
-
-- 当前 `download_data.py` 主要提供数据集说明、下载地址和建议放置路径
-- 还不是自动下载脚本
-
-### 当前代码里用到的数据入口
-
-- `UP-Fall`：由 `src/data/dataset.py::UPFallDataset` 读取
-- `NTU`：训练 / 评估脚本默认从 `data/processed/ntu_coco` 读取 `keypoints.json`
-- `Le2i`：代码层已有数据集类与下载说明，但当前主训练入口仍主要围绕 NTU / UP-Fall
-
-## 🏋️ 训练
-
-### 1. 二分类基线
-
-```bash
-python scripts/train.py \
-  --model gait_lstm \
-  --task classification \
-  --dataset ntu \
-  --data-dir data/processed/ntu_coco
-```
-
-### 2. 连续风险评分
-
-```bash
-python scripts/train.py \
-  --model gait_lstm \
-  --task regression \
-  --dataset ntu \
-  --data-dir data/processed/ntu_coco
-```
-
-### 3. 多模态风险评分
-
-```bash
-python scripts/train.py \
-  --model gait_lstm \
-  --task multimodal \
-  --dataset ntu \
-  --data-dir data/processed/ntu_coco
-```
-
-说明：
-
-- `--model` 当前支持：`gait_lstm`、`gait_transformer`、`stgcn`
-- `--task` 当前支持：`classification`、`regression`、`multimodal`
-- NTU 路径默认是 `data/processed/ntu_coco`
-- 当前 NTU 的多模态训练里，环境特征仍主要是占位向量，适合先作为结构验证而不是最终实验结论
-
-## 📈 评估
-
-### 1. 分类评估
-
-```bash
-python scripts/evaluate.py \
-  --model gait_lstm \
-  --task classification \
-  --dataset ntu \
-  --checkpoint checkpoints/best_model.pt
-```
-
-### 2. 风险评分评估
-
-```bash
-python scripts/evaluate.py \
-  --model gait_lstm \
-  --task regression \
-  --dataset ntu \
-  --checkpoint checkpoints/best_model.pt
-```
-
-### 3. 多模态评分评估
-
-```bash
-python scripts/evaluate.py \
-  --model gait_lstm \
-  --task multimodal \
-  --dataset ntu \
-  --checkpoint checkpoints/best_model.pt
-```
-
-## 🎥 演示
-
-### 本地摄像头
-
-```bash
-python scripts/demo.py --source camera --camera-id 0 --checkpoint checkpoints/best_model.pt
-```
-
-### 视频文件
-
-```bash
-python scripts/demo.py --source video --path input.mp4 --checkpoint checkpoints/best_model.pt
-```
-
-### 萤石设备
-
-```bash
-python scripts/demo.py --source ezviz --device-serial YOUR_DEVICE_SERIAL --checkpoint checkpoints/best_model.pt
-```
-
-说明：
-
-- 演示链路当前最适合使用风险评分类 checkpoint
-- `predictor.py` 已支持直接加载训练得到的回归 / 多模态 `.pt` checkpoint
-- 若未提供可用 checkpoint，演示链路不会得到真实风险输出
-
-## 📁 当前项目结构
+浏览器打开：
 
 ```text
-config/
-├── settings.py                    # 全局配置中心
-
-docs/
-└── project-collaboration/         # 长期协作、项目档案、论文映射、审计记录
-
-scripts/
-├── download_data.py               # 数据集说明与准备入口
-├── train.py                       # 训练入口
-├── evaluate.py                    # 评估入口
-└── demo.py                        # 演示入口
-
-src/
-├── data/                          # 数据集与 DataLoader
-├── features/                      # 步态特征工程
-├── models/                        # LSTM / Transformer / ST-GCN / 融合 / 风险评分
-├── training/                      # loss / metrics / trainer
-├── inference/                     # predictor / pipeline
-├── ezviz/                         # 萤石 API / 视频流 / 事件处理
-└── utils/                         # 工具函数与可视化
-
-tests/                             # 测试目录
+http://127.0.0.1:7860
 ```
 
-## 📊 当前真实状态
+运行内置演示评估：
 
-### 已经具备的能力
+```bash
+python -B scripts/evaluate_competition_demo.py --repeats 5
+```
 
-- 支持 LSTM、Transformer、ST-GCN 三类骨架建模路线
-- 支持分类、回归、多模态三种任务模式
-- 已有风险等级划分、时间平滑、事件处理逻辑
-- 已有萤石 API、视频流、演示链路骨架
+训练步态特征模型：
 
-### 当前仍在研究推进中的部分
+```bash
+python -B scripts/train_feature_model.py --data-dir data/processed/ntu_coco
+```
 
-- 风险评分标签当前大量依赖动作语义规则映射，而不是真实临床评分标注
-- 多模态环境特征仍未完全接入真实训练流
-- HRNet 姿态估计后端还未完整实现
-- 数据下载脚本仍以说明性功能为主
+训练骨架时序模型：
 
-## 🗂️ 长期协作与记录
+```bash
+python -B scripts/train.py --model gait_lstm --task regression --dataset ntu
+```
 
-为了支持后续持续迭代、论文对照、实验追踪和仓库修改，仓库内维护了以下长期文档：
+## 目录说明
 
-- `docs/project-collaboration/long-term-workflow.md`
-  默认协作流程与长期记录方式。
-- `docs/project-collaboration/project-profile.md`
-  当前仓库的真实项目地图、主流程和状态判断。
-- `docs/project-collaboration/paper-code-mapping.md`
-  论文方法与当前代码模块的映射关系。
-- `docs/project-collaboration/code-audit.md`
-  当前已修复问题与仍待继续处理的问题。
-- `docs/project-collaboration/session-template.md`
-  每次任务结束后的记录模板。
+- `config/`：全局配置
+- `scripts/`：训练、评估、演示、打包脚本
+- `src/data/`：数据集与 DataLoader
+- `src/features/`：步态特征、环境特征、个性化基线
+- `src/models/`：时序模型、特征模型、多模态融合、风险评分
+- `src/inference/`：推理、演示、视频分析
+- `src/alerts/`：分级预警逻辑
+- `web/`：比赛演示前端页面
+- `docs/`：提交与实测准备材料
 
-## 📅 当前阶段建议
+## 重要说明
 
-当前最值得继续投入的方向是：
+当前仓库支持“公开数据集验证 + 比赛系统演示”，但真正冲击高分仍需要补齐：
 
-1. 补齐多模态环境 / 轨迹真实特征输入。
-2. 建立更可信的风险评分标注方案。
-3. 给训练、评估、演示三条主线补稳定的实验规范与默认 checkpoint 约定。
-4. 把自动化测试和回归检查链路整理清楚。
+- 萤石开放平台的实际调用证据
+- 真实居家场景的实测视频或设备联动记录
+- 专项研究报告、功能测试报告、部署说明
+- 与最终演示一致的测试数据与结果截图
+
+详见 [SUBMISSION_CHECKLIST.md](./SUBMISSION_CHECKLIST.md)。
