@@ -40,16 +40,6 @@ class DatasetConfig:
     LE2I_DIR: Path = PROJECT_ROOT / "data" / "datasets" / "Le2i"
     LE2I_FPS: int = 25
 
-    # NTU RGB+D
-    NTU_DIR: Path = PROJECT_ROOT / "data" / "datasets" / "NTU-RGBD"
-    NTU_PROCESSED_DIR: Path = PROJECT_ROOT / "data" / "processed" / "ntu_coco"
-
-    # UR Fall
-    URFALL_DIR: Path = PROJECT_ROOT / "data" / "datasets" / "UR-Fall"
-
-    # ETRI-Activity3D
-    ETRI_DIR: Path = PROJECT_ROOT / "data" / "datasets" / "ETRI-Activity3D"
-
     # 通用
     NUM_KEYPOINTS: int = 17           # COCO 关键点数
     SEQUENCE_LENGTH: int = 30         # 时间窗口长度（帧数）
