@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-05-21 19:03:40",
+  "project_focus": "fall_risk",
+  "submission_goal": "high_preliminary_score",
+  "completed_artifacts": [
+    "feature_metrics"
+  ],
+  "missing_artifacts": [
+    "demo_evaluation",
+    "public_ntu_evaluation",
+    "classification_test"
+  ],
+  "readiness": {
+    "code_and_demo": true,
+    "offline_public_validation": false,
+    "system_flow_validation": false,
+    "ezviz_platform_evidence": false,
+    "real_home_scene_measurement": false
+  },
+  "headline_metrics": {
+    "feature_best_model": "MLP",
+    "feature_results": {
+      "GBDT": {
+        "mae": 11.106336310504894,
+        "rmse": 18.573083951146053,
+        "spearman": 0.41543476782868577,
+        "level_acc": 0.7699887387387387,
+        "train_time": 4.099591016769409
+      },
+      "MLP": {
+        "mae": 9.138713836669922,
+        "rmse": 18.374923602094583,
+        "spearman": 0.4323448217583891,
+        "level_acc": 0.829954954954955,
+        "train_time": 30.56107258796692,
+        "n_params": 3201
+      }
+    },
+    "public_level_accuracy": null,
+    "public_binary_recall": null,
+    "demo_level_accuracy": null
+  }
+}
