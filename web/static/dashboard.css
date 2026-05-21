@@ -1,0 +1,259 @@
+:root {
+  --bg: #f4f0e8;
+  --surface: #fbf7ef;
+  --ink: #171411;
+  --muted: #655d54;
+  --line: rgba(23, 20, 17, 0.12);
+  --accent: #a33f1f;
+  --accent-soft: #d97745;
+  --good: #3b7f47;
+  --warn: #b96d12;
+  --high: #c44c2b;
+  --critical: #932b2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0)),
+    radial-gradient(circle at top left, rgba(163, 63, 31, 0.12), transparent 38%),
+    var(--bg);
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+.masthead {
+  padding: 3rem 1.25rem 2rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.masthead__inner,
+.workspace {
+  width: min(1160px, calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: clamp(2.5rem, 6vw, 4.6rem);
+  line-height: 0.95;
+  font-weight: 700;
+}
+
+.lede {
+  width: min(42rem, 100%);
+  margin: 1rem 0 0;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.statusline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.2rem;
+  margin-top: 1.5rem;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.workspace {
+  padding: 1.4rem 0 4rem;
+}
+
+.band {
+  padding: 1.35rem 0 1.8rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.section-heading h2,
+.system-readout h3,
+.tool-panel h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.section-heading p,
+.tool-panel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.scenario-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.scenario-btn {
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.5);
+  color: var(--ink);
+  padding: 0.9rem 1rem;
+  text-align: left;
+  min-height: 5.5rem;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.scenario-btn strong,
+.scenario-btn span {
+  display: block;
+}
+
+.scenario-btn strong {
+  font-size: 1rem;
+}
+
+.scenario-btn span {
+  margin-top: 0.35rem;
+  color: var(--muted);
+  line-height: 1.4;
+  font-size: 0.92rem;
+}
+
+.scenario-btn:hover,
+.scenario-btn.is-active {
+  transform: translateY(-2px);
+  border-color: rgba(163, 63, 31, 0.45);
+  background: rgba(255,255,255,0.92);
+}
+
+.analysis-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(20rem, 0.85fr);
+  gap: 1.4rem;
+}
+
+.frame-shell {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #efe7dc;
+}
+
+.frame-shell img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.metric-ribbon {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.8rem;
+}
+
+.metric-ribbon div,
+.video-summary div {
+  padding: 0.85rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.metric-ribbon span,
+.video-summary span,
+.readout-grid dt {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.metric-ribbon strong,
+.video-summary strong,
+.readout-grid dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.25rem;
+}
+
+.system-readout {
+  display: grid;
+  gap: 1rem;
+}
+
+.readout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1rem;
+  margin: 0.8rem 0 0;
+}
+
+.readout-grid div {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+
+.feature-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.8rem;
+}
+
+.feature-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.98rem;
+}
+
+.feature-item span {
+  color: var(--muted);
+}
+
+.video-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.tool-panel {
+  padding: 0.25rem 0;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.artifact-list a {
+  color: var(--accent);
+  text-decoration: none;
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+
+.artifact-list a:hover {
+  text-decoration: underline;
+}
+
+button,
+input[type="file"] {
+  font: inherit;
+}
