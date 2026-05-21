@@ -23,6 +23,59 @@ from typing import Optional, Tuple, List, Dict
 from config.settings import CFG_DATA, CFG_PATHS
 
 
+def infer_ntu_action_key(
+    action_name: str = "",
+    action_id: Optional[int] = None,
+    label: int = 0,
+) -> str:
+    """
+    将 NTU 样本元信息映射到统一动作键。
+
+    优先使用 action_id，因为处理后的目录名可能是 ADL_10000 这类
+    非语义编号，直接解析目录名会把大量 ADL 样本错误压缩成同一个默认分数。
+    """
+    action_name = action_name or ""
+
+    if label == 1 or "Fall" in action_name or "fall" in action_name:
+        if action_id is not None:
+            if 43 <= action_id <= 50:
+                return f"A{action_id}"
+            if 42 <= action_id <= 49:
+                return f"A{action_id + 1}"
+        return "Fall"
+
+    if action_id is not None:
+        if 1 <= action_id <= 12:
+            return f"A{action_id}"
+        if 0 <= action_id <= 11:
+            return f"A{action_id + 1}"
+
+    if "ADL" in action_name:
+        try:
+            act_num = int(action_name.split("_")[-1])
+            if 1 <= act_num <= 12:
+                return f"A{act_num}"
+        except (ValueError, IndexError):
+            pass
+
+    return "ADL"
+
+
+def infer_ntu_risk_score(
+    action_name: str,
+    label: int,
+    risk_mapping: Dict[str, float],
+    action_id: Optional[int] = None,
+) -> float:
+    """根据动作信息返回可复用的 NTU 风险代理标签。"""
+    action_key = infer_ntu_action_key(
+        action_name=action_name,
+        action_id=action_id,
+        label=label,
+    )
+    return float(risk_mapping.get(action_key, risk_mapping.get("ADL", 15)))
+
+
 class FallDetectionDataset(Dataset):
     """
     通用跌倒检测数据集基类
@@ -92,23 +145,17 @@ class FallDetectionDataset(Dataset):
 
     def _precompute_risk_scores(self):
         """为每个样本预计算确定性风险分数（基于动作语义）"""
-        for i, sample in enumerate(self.samples):
-            action = sample.get("metadata", {}).get("action", "")
+        for sample in self.samples:
+            metadata = sample.get("metadata", {})
+            action = metadata.get("action", "")
+            action_id = metadata.get("action_id")
             label = sample.get("label", 0)
-
-            if label == 1 or "Fall" in action or "fall" in action:
-                # Fall 动作：85 分（确定性）
-                sample["risk_score"] = float(self.ACTION_RISK_SCORES.get("Fall", 85))
-            elif "ADL" in action:
-                # 从 action name 提取动作编号 (如 ADL_001 -> 1)
-                try:
-                    act_num = int(action.split("_")[-1])
-                    act_key = f"A{act_num}"
-                    sample["risk_score"] = float(self.ACTION_RISK_SCORES.get(act_key, 15))
-                except (ValueError, IndexError):
-                    sample["risk_score"] = float(self.ACTION_RISK_SCORES.get("ADL", 15))
-            else:
-                sample["risk_score"] = float(self.ACTION_RISK_SCORES.get("ADL", 15))
+            sample["risk_score"] = infer_ntu_risk_score(
+                action_name=action,
+                action_id=action_id,
+                label=label,
+                risk_mapping=self.ACTION_RISK_SCORES,
+            )
 
     def __getitem__(self, idx: int) -> Tuple:
         sample = self.samples[idx]
