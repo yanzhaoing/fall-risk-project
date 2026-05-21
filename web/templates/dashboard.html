@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>老人跌倒风险预警系统</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="masthead__inner">
+        <p class="eyebrow">XH-202617 · 跌倒风险方向</p>
+        <h1>老人跌倒风险预警系统</h1>
+        <p class="lede">
+          以前置预判、过程识别、分级预警为主线，围绕居家养老场景构建可演示、可验证的风险闭环。
+        </p>
+        <div class="statusline">
+          <span>演示模式</span>
+          <span id="server-state">服务已启动</span>
+          <span>本地地址 127.0.0.1:7860</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="band controls-band">
+        <div class="section-heading">
+          <h2>场景预警演示</h2>
+          <p>模拟从稳定步态到高危异常的连续风险升级。</p>
+        </div>
+        <div class="scenario-strip" id="scenario-strip"></div>
+      </section>
+
+      <section class="band analysis-band">
+        <div class="visual-stage">
+          <div class="frame-shell">
+            <img id="scene-frame" alt="场景预览" />
+          </div>
+          <div class="metric-ribbon">
+            <div>
+              <span>综合风险</span>
+              <strong id="score-value">--</strong>
+            </div>
+            <div>
+              <span>风险等级</span>
+              <strong id="level-value">--</strong>
+            </div>
+            <div>
+              <span>响应动作</span>
+              <strong id="action-value">--</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="system-readout">
+          <section>
+            <h3>预警结果</h3>
+            <dl class="readout-grid">
+              <div><dt>当前场景</dt><dd id="scenario-name">--</dd></div>
+              <div><dt>通知状态</dt><dd id="notify-value">--</dd></div>
+              <div><dt>行为风险</dt><dd id="behavior-value">--</dd></div>
+              <div><dt>环境风险</dt><dd id="environment-value">--</dd></div>
+              <div><dt>基线偏移</dt><dd id="baseline-value">--</dd></div>
+              <div><dt>目标对象</dt><dd id="targets-value">--</dd></div>
+            </dl>
+          </section>
+
+          <section>
+            <h3>关键解释特征</h3>
+            <div class="feature-list" id="feature-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="band evidence-band">
+        <div class="section-heading">
+          <h2>视频分析与验证</h2>
+          <p>用于展示系统对上传视频或样例视频的风险筛查能力。</p>
+        </div>
+
+        <div class="video-tools">
+          <div class="tool-panel">
+            <h3>样例视频分析</h3>
+            <p>读取系统内置样例，展示逐帧风险变化。</p>
+            <button class="primary" id="sample-video-btn" type="button">加载样例视频</button>
+          </div>
+          <div class="tool-panel">
+            <h3>本地视频上传</h3>
+            <p>支持上传一段本地视频做轻量风险分析。</p>
+            <input id="video-file" type="file" accept="video/*" />
+            <button class="secondary" id="upload-video-btn" type="button">分析上传视频</button>
+          </div>
+        </div>
+
+        <div class="video-summary" id="video-summary">
+          <div><span>来源</span><strong id="video-source">--</strong></div>
+          <div><span>采样帧数</span><strong id="video-count">--</strong></div>
+          <div><span>平均风险</span><strong id="video-avg">--</strong></div>
+          <div><span>峰值风险</span><strong id="video-peak">--</strong></div>
+          <div><span>峰值等级</span><strong id="video-level">--</strong></div>
+        </div>
+
+        <div class="frame-grid" id="video-frames"></div>
+      </section>
+
+      <section class="band evidence-band">
+        <div class="section-heading">
+          <h2>评审证据入口</h2>
+          <p>把离线验证、系统测试、提交准备和仍需补齐的材料集中展示。</p>
+        </div>
+
+        <div class="video-tools">
+          <div class="tool-panel">
+            <h3>结果文件</h3>
+            <div class="artifact-list">
+              <a href="/artifacts/results/demo_evaluation.json" target="_blank" rel="noreferrer">功能测试结果 JSON</a>
+              <a href="/artifacts/results/public_ntu_evaluation.json" target="_blank" rel="noreferrer">公开数据集评测 JSON</a>
+              <a href="/artifacts/results/submission_readiness.json" target="_blank" rel="noreferrer">参赛就绪概览 JSON</a>
+            </div>
+          </div>
+          <div class="tool-panel">
+            <h3>文档骨架</h3>
+            <div class="artifact-list">
+              <a href="/artifacts/docs/evidence_matrix.md" target="_blank" rel="noreferrer">评审证据矩阵</a>
+              <a href="/artifacts/docs/minimal_user_materials.md" target="_blank" rel="noreferrer">你只需提供的材料</a>
+              <a href="/artifacts/SUBMISSION_CHECKLIST.md" target="_blank" rel="noreferrer">最终提交检查清单</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="video-summary" id="readiness-summary">
+          <div><span>功能测试</span><strong id="artifact-demo">--</strong></div>
+          <div><span>公开评测</span><strong id="artifact-public">--</strong></div>
+          <div><span>就绪概览</span><strong id="artifact-readiness">--</strong></div>
+          <div><span>仍需补的核心材料</span><strong id="artifact-needed">--</strong></div>
+          <div><span>当前目标</span><strong>初审高分</strong></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/dashboard.js"></script>
+  </body>
+  </html>
